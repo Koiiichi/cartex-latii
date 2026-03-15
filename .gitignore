@@ -1,5 +1,12 @@
-# .venv
+# .venv directory 
 .venv/
 
-# __pycache__
+# __pycache__ files
 __pycache__/
+
+# .env file 
+.env
+
+# debug log files
+/debug
+
