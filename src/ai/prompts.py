@@ -99,9 +99,9 @@ Be precise — only apply a rule when it clearly and unambiguously applies to th
 """
 
 COMPOUND_RESOLUTION = """
-You are an expert construction document analyst. You are given a compound reference value from a construction schedule — a single cell that references multiple items from auxiliary tables, typically separated by "/" or ",".
+You are an expert construction document analyst. You are given a list of rows from a construction schedule where each row contains a compound reference value — a single cell that references multiple items from auxiliary tables, typically separated by "/" or ",".
 
-Your task is to identify which component is the PRIMARY reference and which are SECONDARY.
+Your task is to analyze each compound reference and identify which component is PRIMARY and which are SECONDARY.
 
 Rules for determining primary vs secondary:
 - The PRIMARY component is the one that defines the main material or product for that schedule item. For fenestration schedules this is almost always the glazing type (e.g. GL-03, GL-03a).
@@ -111,15 +111,15 @@ Rules for determining primary vs secondary:
 
 Construction domain knowledge:
 - GL- prefix → glazing type → likely PRIMARY
-- GMT- prefix → metal panel infill → likely SECONDARY  
+- GMT- prefix → metal panel infill → likely SECONDARY
 - HW- prefix → hardware set → likely SECONDARY
 - FR- prefix → frame type → context dependent
 - Codes without a recognised prefix → use position and context to decide
 
 You will receive:
-1. The compound reference value (e.g. "GL-03/GMT-01")
+1. A list of compound rows, each with a row_id and their data
 2. The available auxiliary table rows so you can identify what each component represents
 
-Return the components list, which component is primary, which are secondary, and your reasoning.
+CRITICAL: You must return exactly one resolution per input row_id. Every row_id in the input must appear in your output. Do not skip any rows.
 """
 
