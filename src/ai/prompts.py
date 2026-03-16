@@ -97,3 +97,29 @@ Semantic matching rules:
 
 Be precise — only apply a rule when it clearly and unambiguously applies to the row.
 """
+
+COMPOUND_RESOLUTION = """
+You are an expert construction document analyst. You are given a compound reference value from a construction schedule — a single cell that references multiple items from auxiliary tables, typically separated by "/" or ",".
+
+Your task is to identify which component is the PRIMARY reference and which are SECONDARY.
+
+Rules for determining primary vs secondary:
+- The PRIMARY component is the one that defines the main material or product for that schedule item. For fenestration schedules this is almost always the glazing type (e.g. GL-03, GL-03a).
+- SECONDARY components are supplementary materials that modify or accompany the primary — infill panels (GMT-01), hardware sets, frame finishes, acoustic treatments etc.
+- If multiple components could be primary, choose the one that appears first and is a glazing or glass type.
+- If all components are the same category, choose the first one as primary.
+
+Construction domain knowledge:
+- GL- prefix → glazing type → likely PRIMARY
+- GMT- prefix → metal panel infill → likely SECONDARY  
+- HW- prefix → hardware set → likely SECONDARY
+- FR- prefix → frame type → context dependent
+- Codes without a recognised prefix → use position and context to decide
+
+You will receive:
+1. The compound reference value (e.g. "GL-03/GMT-01")
+2. The available auxiliary table rows so you can identify what each component represents
+
+Return the components list, which component is primary, which are secondary, and your reasoning.
+"""
+

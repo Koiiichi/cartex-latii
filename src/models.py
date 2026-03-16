@@ -177,3 +177,9 @@ class GeminiColumnDetectionResult(GeminiResponse):
         default=[],
         description="List of all detected column matches between the main schedule and auxiliary tables. Each match indicates which column in the main schedule corresponds to which column in which auxiliary table."
     )
+
+class GeminiCompoundResolution(GeminiResponse):
+    components: list[str] = Field(description="List of the individual components or attributes that were identified as part of this compound item. For example, if a row in the main schedule includes a note that references multiple items in an auxiliary table, list each of those items here.")
+    primary: str = Field(description="The primary component or attribute that best represents the main item. This is the value that should be used for matching against the auxiliary table.")
+    secondary: list[str] = Field(description="Any secondary components or attributes that provide additional context or information about the main item, but are not the primary basis for matching.")
+    reasoning: str = Field(description="Detailed explanation of why the primary component was chosen for matching. Reference specific text from the main schedule and auxiliary tables that informed this decision.")
