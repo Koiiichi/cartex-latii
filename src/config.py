@@ -16,7 +16,8 @@ class Config:
         self.debug_dir = self.base_dir / "debug"
         self.prompts_dir = self.base_dir / "ai" / "prompts"
         self.debug_dir.mkdir(exist_ok=True)
-        self.prompts_dir.mkdir(exist_ok=True)   
+        self.prompts_dir.mkdir(exist_ok=True)
+        self.dpi = 210   
 
 config = Config()
 

@@ -1,25 +1,21 @@
 from google import genai
 from google.genai import errors
 from config import config
-from pydantic import BaseModel
 from typing import Type
-from enum import Enum
 import httpx
 import stamina
+from models import T, ModelType
 
-class ModelType(Enum):
-    FAST = "fast"
-    ADVANCED = "advanced"
 
 client = genai.Client(api_key=config.gemini_api_key)
 
 class Gemini:
     @stamina.retry(on=(errors.ServerError, httpx.TimeoutException), attempts=3, wait_initial=1.0, wait_max=30.0)
-    def request(self, prompt: str, schema: Type[BaseModel], model: ModelType = ModelType.FAST) -> BaseModel:
+    def request(self, contents: str | list, schema: Type[T], model: ModelType = ModelType.FAST) -> T:
         try:
             response = client.models.generate_content(
             model=config.gemini_fast_model if model == ModelType.FAST else config.gemini_advanced_model,
-            contents=prompt,
+            contents=contents,
             config={
                 "response_mime_type": "application/json",
                 "response_json_schema": schema.model_json_schema(),
