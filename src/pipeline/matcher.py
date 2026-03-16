@@ -9,7 +9,7 @@ class Matcher:
     def __init__(self):
         self.gemini = Gemini()
 
-    def match(self, extraction_results: ExtractionResult) -> list[MergedRow]:
+    def match(self, extraction_results: ExtractionResult) -> tuple[list[MergedRow], GeminiColumnDetectionResult]:
         main_table = None
         auxiliary_tables = []
         for table in extraction_results.tables:
@@ -38,7 +38,7 @@ class Matcher:
             )
             all_merged_rows.extend(merged)
 
-        return all_merged_rows
+        return all_merged_rows, column_detection_result
 
     def _detect_link_columns(self, tables: list[TableModel]) -> GeminiColumnDetectionResult:
         tables_json = json.dumps([table.model_dump() for table in tables], indent=2)
