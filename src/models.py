@@ -63,7 +63,7 @@ class MergedRow(BaseModel):
     match_type: MatchType
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     reasoning: Optional[str] = None
-    provenance: Optional[str] = None
+    table_id: Optional[str] = None
 
 class ExtractionResult(BaseModel):
     tables: list[TableModel] = []
@@ -153,4 +153,17 @@ class GeminiResolutionModel(GeminiResponse):
     )
     reasoning: str = Field(
         description="Explanation of why this match was made or why no match could be found. Be specific — reference the exact strings compared or the rule applied."
+    )
+
+# Gemini models for mapping auxiliary tables to main schedule items
+
+class GeminiColumnMatch(BaseModel):
+    main_column: str = Field(description="The column header from the main schedule.")
+    auxiliary_column: str = Field(description="The column header from the auxiliary table that matches the main column.")
+    auxiliary_table_id: str = Field(description="The table_id of the auxiliary table where the matching column was found.")
+
+class GeminiColumnDetectionResult(GeminiResponse):
+    matches: list[GeminiColumnMatch] = Field(
+        default=[],
+        description="List of all detected column matches between the main schedule and auxiliary tables. Each match indicates which column in the main schedule corresponds to which column in which auxiliary table."
     )
