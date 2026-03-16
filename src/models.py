@@ -31,6 +31,12 @@ T = TypeVar('T', bound=BaseModel)
 
 # Base models
 
+class BoundingBox(BaseModel):
+    x: int = Field(description="Normalised horizontal position of the left edge, in the range 0–1000 where 0 is the left edge and 1000 is the right edge of the image.")
+    y: int = Field(description="Normalised vertical position of the top edge, in the range 0–1000 where 0 is the top edge and 1000 is the bottom edge of the image.")
+    width: int = Field(description="Normalised width of the element, in the range 0–1000.")
+    height: int = Field(description="Normalised height of the element, in the range 0–1000.")
+
 class TableModel(BaseModel):
     table_id: str
     role: TableRole
@@ -39,6 +45,7 @@ class TableModel(BaseModel):
     rows: list[dict[str, str]]
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     notes: Optional[str] = None
+    bbox: Optional[BoundingBox] = None  # x, y, width, height in pixels
 
 class ContextModel(BaseModel):
     context_id: str
@@ -47,6 +54,7 @@ class ContextModel(BaseModel):
     content: str
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     notes: Optional[str] = None
+    bbox: Optional[BoundingBox] = None  # x, y, width, height in pixels
 
 class TextContextModel(ContextModel):
     category: Optional[str] = None
@@ -80,12 +88,6 @@ class GeminiResponse(BaseModel):
         description="Any observations about irregularities, ambiguities, or anything unusual encountered during extraction that may affect accuracy."
     )
 
-class GeminiBoundingBox(BaseModel):
-    x: int = Field(description="Horizontal distance in pixels from the left edge of the page to the left edge of the detected element.")
-    y: int = Field(description="Vertical distance in pixels from the top edge of the page to the top edge of the detected element.")
-    width: int = Field(description="Width of the detected element in pixels.")
-    height: int = Field(description="Height of the detected element in pixels.")
-
 class GeminiTableModel(GeminiResponse):
     headers: list[str] = Field(
         description="List of column header names exactly as they appear in the table, from left to right. Include merged or multi-level headers as a single combined string e.g. 'Type / Subtype'."
@@ -99,7 +101,7 @@ class GeminiTableModel(GeminiResponse):
     page_number: int = Field(
         description="Page number where this table was found, as it appears in the document."
     )
-    bbox: Optional[GeminiBoundingBox] = Field(
+    bbox: Optional[BoundingBox] = Field(
         default=None,
         description="Bounding box coordinates of the table on the page. Provide if you can determine the location reliably, otherwise leave null."
     )
@@ -114,7 +116,7 @@ class GeminiContextModel(GeminiResponse):
     page_number: int = Field(
         description="Page number where this context item was found."
     )
-    bbox: Optional[GeminiBoundingBox] = Field(
+    bbox: Optional[BoundingBox] = Field(
         default=None,
         description="Bounding box coordinates of this context item on the page. Provide if you can determine the location reliably, otherwise leave null."
     )

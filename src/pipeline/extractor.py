@@ -1,5 +1,5 @@
 from src.gemini import Gemini
-from src.models import ContextType, ExtractionResult, GeminiImageContextModel, GeminiTableResult, GeminiContextResult, GeminiTextContextModel, ImageContextModel, TextContextModel, TableModel, GeminiTableModel, T, ModelType
+from src.models import BoundingBox, ContextType, ExtractionResult, GeminiImageContextModel, GeminiTableResult, GeminiContextResult, GeminiTextContextModel, ImageContextModel, TextContextModel, TableModel, GeminiTableModel, T, ModelType
 from google.genai import types
 from src.config import config
 from src.ai.prompts import CONTEXT_EXTRACTION, TABLE_EXTRACTION
@@ -27,7 +27,8 @@ class Extractor:
                 headers=table.headers,
                 rows=table.rows,
                 confidence=table.confidence,
-                notes=table.notes
+                notes=table.notes,
+                bbox=table.bbox,
             ))
         logger.info("Extracted %d tables", len(tables))
 
@@ -35,6 +36,7 @@ class Extractor:
         contexts_result = self._extract_context(image_bytes)
         contexts = []
         for i, context in enumerate(contexts_result.context):
+            bbox = context.bbox
             if isinstance(context, GeminiTextContextModel):
                 contexts.append(TextContextModel(
                     context_id=f"context_{i}_{page_number}",
@@ -44,7 +46,8 @@ class Extractor:
                     confidence=context.confidence,
                     notes=context.notes,
                     category=context.category,
-                    scope=None
+                    scope=None,
+                    bbox=bbox,
                 ))
             elif isinstance(context, GeminiImageContextModel):
                 contexts.append(ImageContextModel(
@@ -56,7 +59,8 @@ class Extractor:
                     notes=context.notes,
                     format="png",
                     dimensions=(0, 0),
-                    interpretation=context.interpretation
+                    interpretation=context.interpretation,
+                    bbox=bbox,
                 ))
         logger.info("Extracted %d context items", len(contexts))
         return ExtractionResult(tables=tables, context=contexts)

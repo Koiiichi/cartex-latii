@@ -8,6 +8,9 @@ import traceback
 import json
 import logging
 from datetime import datetime
+from PIL import Image, ImageDraw, ImageFont
+import io
+import pymupdf
 
 from main import extractor, matcher, resolver, merger
 from src.models import MatchType, TableRole
@@ -20,10 +23,84 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Bbox overlay colours (RGBA)
+_COLOUR_MAIN    = (30,  120, 255, 200)
+_COLOUR_AUX     = (40,  200, 100, 200)
+_COLOUR_CONTEXT = (255, 160,  30, 180)
+
+_LABEL_BG_MAIN    = (30,  120, 255, 220)
+_LABEL_BG_AUX     = (40,  200, 100, 220)
+_LABEL_BG_CONTEXT = (255, 160,  30, 220)
+
+
+def _render_page_pil(file_path: str, page_idx: int) -> Image.Image:
+    """Render a PDF page to a PIL Image."""
+    doc = pymupdf.open(file_path)
+    page = doc.load_page(page_idx)
+    pix = page.get_pixmap(dpi=config.dpi)
+    return Image.open(io.BytesIO(pix.tobytes()))
+
+
+def _draw_bboxes(img: Image.Image, tables, contexts) -> Image.Image:
+    """Draw coloured bbox rectangles + role labels onto a copy of img.
+
+    Gemini returns coordinates in a normalised 0–1000 space regardless of the
+    prompt asking for pixels, so we scale to the actual image dimensions here.
+    """
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    img_w, img_h = img.size
+
+    try:
+        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size=22)
+    except Exception:
+        font = ImageFont.load_default()
+
+    def draw_box(bbox, colour, label_bg, label):
+        if bbox is None:
+            return
+        # Scale from Gemini's 0-1000 normalised space to image pixels
+        x = int(bbox.x * img_w / 1000)
+        y = int(bbox.y * img_h / 1000)
+        w = int(bbox.width  * img_w / 1000)
+        h = int(bbox.height * img_h / 1000)
+        # Semi-transparent fill
+        draw.rectangle([x, y, x + w, y + h], fill=(*colour[:3], 40), outline=colour, width=3)
+        # Label background + text
+        label_w = len(label) * 13 + 8
+        label_h = 28
+        draw.rectangle([x, y - label_h, x + label_w, y], fill=label_bg)
+        draw.text((x + 4, y - label_h + 4), label, fill=(255, 255, 255, 255), font=font)
+
+    for table in tables:
+        if table.role == TableRole.MAIN:
+            draw_box(table.bbox, _COLOUR_MAIN, _LABEL_BG_MAIN,
+                     f"MAIN  ({len(table.rows)} rows)")
+        elif table.role == TableRole.AUXILIARY:
+            draw_box(table.bbox, _COLOUR_AUX, _LABEL_BG_AUX,
+                     f"AUX  ({len(table.rows)} rows)")
+
+    for ctx in contexts:
+        draw_box(ctx.bbox, _COLOUR_CONTEXT, _LABEL_BG_CONTEXT,
+                 f"CTX  {getattr(ctx, 'category', '') or 'context'}")
+
+    return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+
+
+def preview_page(pdf_file, page_number):
+    """Render plain page preview whenever file or page number changes."""
+    if pdf_file is None:
+        return None
+    try:
+        img = _render_page_pil(pdf_file.name, int(page_number) - 1)
+        return img
+    except Exception:
+        return None
+
 
 def process_document(pdf_file, page_number):
     if pdf_file is None:
-        yield None, "No file uploaded.", gr.update(visible=False)
+        yield None, None, "No file uploaded.", gr.update(visible=False)
         return
 
     lines: list[str] = []
@@ -33,28 +110,33 @@ def process_document(pdf_file, page_number):
         logger.info(msg)
         return "\n".join(lines)
 
-    try:
-        page_idx = int(page_number) - 1
+    page_idx = int(page_number) - 1
+    plain_img = _render_page_pil(pdf_file.name, page_idx)
 
+    try:
         # --- Stage 1: Extraction ---
-        yield None, log(f"[1/4] Extracting tables and context from page {int(page_number)}..."), gr.update(visible=False)
+        yield None, plain_img, log(f"[1/4] Extracting tables and context from page {int(page_number)}..."), gr.update(visible=False)
         result = extractor.extract(pdf_file.name, page_idx)
 
         main_tables = [t for t in result.tables if t.role == TableRole.MAIN]
         aux_tables  = [t for t in result.tables if t.role == TableRole.AUXILIARY]
-        yield None, log(
+        status = log(
             f"      Done — {len(result.tables)} table(s) found "
             f"({len(main_tables)} main, {len(aux_tables)} auxiliary), "
             f"{len(result.context)} context item(s)"
-        ), gr.update(visible=False)
+        )
+
+        # Overlay bboxes as soon as extraction is done
+        annotated_img = _draw_bboxes(plain_img, result.tables, result.context)
+        yield None, annotated_img, status, gr.update(visible=False)
 
         # --- Stage 2: Matching ---
-        yield None, log("[2/4] Matching rows between main and auxiliary tables..."), gr.update(visible=False)
-        rows, column_detection_result = matcher.match(result)
+        yield None, annotated_img, log("[2/4] Matching rows between main and auxiliary tables..."), gr.update(visible=False)
+        rows, _ = matcher.match(result)
 
         exact_count     = sum(1 for r in rows if r.match_type == MatchType.EXACT)
         unmatched_count = sum(1 for r in rows if r.match_type == MatchType.UNMATCHED)
-        yield None, log(
+        yield None, annotated_img, log(
             f"      Done — {exact_count} exact match(es), {unmatched_count} unmatched"
         ), gr.update(visible=False)
 
@@ -63,53 +145,52 @@ def process_document(pdf_file, page_number):
         unmatched_rows = [r for r in rows if r.match_type == MatchType.UNMATCHED]
 
         if unmatched_rows:
-            yield None, log(f"[3/4] Resolving {len(unmatched_rows)} unmatched row(s) (fuzzy + semantic)..."), gr.update(visible=False)
+            yield None, annotated_img, log(f"[3/4] Resolving {len(unmatched_rows)} unmatched row(s) (fuzzy + semantic)..."), gr.update(visible=False)
             resolved_rows = resolver.resolve(unmatched_rows, result)
 
-            fuzzy_count   = sum(1 for r in resolved_rows if r.match_type == MatchType.FUZZY)
-            rule_count    = sum(1 for r in resolved_rows if r.match_type == MatchType.RULE_BASED)
-            still_count   = sum(1 for r in resolved_rows if r.match_type == MatchType.UNMATCHED)
-            yield None, log(
+            fuzzy_count = sum(1 for r in resolved_rows if r.match_type == MatchType.FUZZY)
+            rule_count  = sum(1 for r in resolved_rows if r.match_type == MatchType.RULE_BASED)
+            still_count = sum(1 for r in resolved_rows if r.match_type == MatchType.UNMATCHED)
+            yield None, annotated_img, log(
                 f"      Done — {fuzzy_count} fuzzy, {rule_count} rule-based, {still_count} still unmatched"
             ), gr.update(visible=False)
         else:
-            yield None, log("[3/4] No unmatched rows — skipping resolution"), gr.update(visible=False)
+            yield None, annotated_img, log("[3/4] No unmatched rows — skipping resolution"), gr.update(visible=False)
             resolved_rows = []
 
         # --- Stage 4: Merging ---
-        yield None, log("[4/4] Merging and ordering final results..."), gr.update(visible=False)
+        yield None, annotated_img, log("[4/4] Merging and ordering final results..."), gr.update(visible=False)
         main_tables_for_merge = [t for t in result.tables if t.role == TableRole.MAIN]
         if not main_tables_for_merge:
             raise ValueError("No main tables found — cannot merge.")
 
         merged_rows = merger.merge(resolved_rows + exact_rows, main_tables_for_merge)
-        yield None, log(f"      Done — {len(merged_rows)} row(s) in final output"), gr.update(visible=False)
+        yield None, annotated_img, log(f"      Done — {len(merged_rows)} row(s) in final output"), gr.update(visible=False)
 
         # --- Build dataframe ---
         rows_data = []
         for row in merged_rows:
             row_dict = row.data.copy()
-            row_dict["_match_type"]  = row.match_type.value
-            row_dict["_confidence"]  = str(row.confidence)
-            row_dict["_reasoning"]   = row.reasoning or ""
+            row_dict["_match_type"] = row.match_type.value
+            row_dict["_confidence"] = str(row.confidence)
+            row_dict["_reasoning"]  = row.reasoning or ""
             rows_data.append(row_dict)
         df = pd.DataFrame(rows_data)
 
         # --- Write debug log ---
         debug_log = {
-            "timestamp":         datetime.now().isoformat(),
-            "file":              pdf_file.name,
-            "page":              int(page_number),
-            "total_rows":        len(merged_rows),
-            "exact_matches":     sum(1 for r in merged_rows if r.match_type == MatchType.EXACT),
-            "fuzzy_matches":     sum(1 for r in merged_rows if r.match_type == MatchType.FUZZY),
-            "rule_based_matches":sum(1 for r in merged_rows if r.match_type == MatchType.RULE_BASED),
-            "unmatched":         sum(1 for r in merged_rows if r.match_type == MatchType.UNMATCHED),
-            "rows":              [row.model_dump(mode='json') for row in merged_rows],
+            "timestamp":          datetime.now().isoformat(),
+            "file":               pdf_file.name,
+            "page":               int(page_number),
+            "total_rows":         len(merged_rows),
+            "exact_matches":      sum(1 for r in merged_rows if r.match_type == MatchType.EXACT),
+            "fuzzy_matches":      sum(1 for r in merged_rows if r.match_type == MatchType.FUZZY),
+            "rule_based_matches": sum(1 for r in merged_rows if r.match_type == MatchType.RULE_BASED),
+            "unmatched":          sum(1 for r in merged_rows if r.match_type == MatchType.UNMATCHED),
+            "rows":               [row.model_dump(mode='json') for row in merged_rows],
         }
         debug_filename = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        debug_path = config.debug_dir / debug_filename
-        with open(debug_path, "w") as f:
+        with open(config.debug_dir / debug_filename, "w") as f:
             json.dump(debug_log, f, indent=2, default=str)
 
         summary = (
@@ -119,46 +200,53 @@ def process_document(pdf_file, page_number):
             f"Unmatched: {debug_log['unmatched']}\n"
             f"Debug log → {debug_filename}"
         )
-        yield df, log(f"\nComplete — {len(merged_rows)} rows\n{summary}"), gr.update(visible=False)
+        yield df, annotated_img, log(f"\nComplete — {len(merged_rows)} rows\n{summary}"), gr.update(visible=False)
 
     except Exception as e:
         tb = traceback.format_exc()
         logger.error("Pipeline failed:\n%s", tb)
-        yield None, log(f"\nPipeline failed: {type(e).__name__}: {e}"), gr.update(value=tb, visible=True)
+        yield None, plain_img, log(f"\nPipeline failed: {type(e).__name__}: {e}"), gr.update(value=tb, visible=True)
 
+
+# ── UI ─────────────────────────────────────────────────────────────────────────
 
 with gr.Blocks(title="Cartex — Type 1 Extraction") as app:
     gr.Markdown("# Cartex")
     gr.Markdown("### Sub-Item / Sub-Table Extraction — Type 1: Contextual Tables")
 
     with gr.Row():
-        with gr.Column(scale=1):
-            pdf_input = gr.File(
-                label="Upload PDF",
-                file_types=[".pdf"]
-            )
-            page_number = gr.Number(
-                label="Page Number",
-                value=1,
-                minimum=1,
-                precision=0
-            )
-            run_button = gr.Button("Run Pipeline", variant="primary")
+        # Controls
+        with gr.Column(scale=1, min_width=220):
+            pdf_input   = gr.File(label="Upload PDF", file_types=[".pdf"])
+            page_number = gr.Number(label="Page Number", value=1, minimum=1, precision=0)
+            run_button  = gr.Button("Run Pipeline", variant="primary")
 
-        with gr.Column(scale=2):
-            status_output = gr.Textbox(
-                label="Pipeline Log",
-                lines=10,
-                max_lines=20,
+        # Page viewer
+        with gr.Column(scale=3):
+            page_image = gr.Image(
+                label="Page Preview  ·  Blue = main table  ·  Green = auxiliary  ·  Orange = context",
+                type="pil",
                 interactive=False,
-                autoscroll=True,
             )
+
+    # Live preview triggers
+    pdf_input.change(fn=preview_page,   inputs=[pdf_input, page_number], outputs=[page_image])
+    page_number.change(fn=preview_page, inputs=[pdf_input, page_number], outputs=[page_image])
+
+    with gr.Row():
+        status_output = gr.Textbox(
+            label="Pipeline Log",
+            lines=10,
+            max_lines=20,
+            interactive=False,
+            autoscroll=True,
+        )
 
     with gr.Row():
         results_table = gr.Dataframe(
             label="Merged Table",
             interactive=False,
-            wrap=True
+            wrap=True,
         )
 
     with gr.Row():
@@ -172,7 +260,7 @@ with gr.Blocks(title="Cartex — Type 1 Extraction") as app:
     run_button.click(
         fn=process_document,
         inputs=[pdf_input, page_number],
-        outputs=[results_table, status_output, error_output]
+        outputs=[results_table, page_image, status_output, error_output],
     )
 
 if __name__ == "__main__":
