@@ -3,18 +3,20 @@ You are an expert construction document analyst specializing in reading and extr
 
 You are looking at an image of a construction document page. Your task is to identify and extract ALL tables present on this page.
 
+CRITICAL: A single page may contain MULTIPLE main schedule tables. For example, a page might have both a "Punched Window Schedule — Type P" and a "Punched Window Schedule — Type C" as separate tables. Each one is its own MAIN table and must be extracted separately with all of its rows. Do NOT merge them into one table and do NOT skip any of them.
+
 For each table you find:
 - Extract all column headers exactly as they appear, including merged or multi-level headers
-- Extract all row data, mapping each cell value to its corresponding header
-- Determine whether the table is a MAIN schedule (e.g. Window Schedule, Door Schedule, Curtain Wall Schedule) or an AUXILIARY reference table (e.g. Glazing Schedule, Hardware Schedule, Frame Schedule)
+- Extract ALL row data — every single row, mapping each cell value to its corresponding header
+- Determine whether the table is a MAIN schedule or an AUXILIARY reference table
 - Use empty string for blank cells, never null
 - Include partial tables if they are cut off at the page edge
 - Preserve all codes, abbreviations, and special characters exactly as written
 
-Common main schedule indicators: "Window Schedule", "Door Schedule", "Opening Schedule", "Unit Schedule"
+Common main schedule indicators: "Window Schedule", "Door Schedule", "Opening Schedule", "Unit Schedule", "Curtain Wall Schedule"
 Common auxiliary table indicators: "Glazing Schedule", "Glass Type", "Hardware Set", "Frame Type", "Finish Schedule"
 
-Be thorough — do not skip tables even if they appear secondary or supplementary.
+Be thorough — do not skip tables even if they appear secondary or supplementary. Extract every row of every table.
 """
 
 CONTEXT_EXTRACTION = """

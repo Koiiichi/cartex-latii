@@ -10,3 +10,5 @@ __pycache__/
 # debug log files
 /debug
 
+# Claude Instructions
+CLAUDE.md

@@ -1,8 +1,11 @@
-from models import ExtractionResult, GeminiResolutionResult, ImageContextModel, MatchType, MergedRow, ModelType, TableModel, TableRole, TextContextModel
-from gemini import Gemini
+from src.models import ExtractionResult, GeminiResolutionResult, ImageContextModel, MatchType, MergedRow, ModelType, TableModel, TableRole, TextContextModel
+from src.gemini import Gemini
 from google.genai import types
-from ai.prompts import FUZZY_MATCHING, SEMANTIC_MATCHING
-import json 
+from src.ai.prompts import FUZZY_MATCHING, SEMANTIC_MATCHING
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Resolver:
@@ -12,15 +15,21 @@ class Resolver:
     def resolve(self, unmatched_rows: list[MergedRow], extraction_result: ExtractionResult) -> list[MergedRow]:
         auxiliary_tables = [table for table in extraction_result.tables if table.role == TableRole.AUXILIARY]
         context = extraction_result.context
+
+        logger.info("Fuzzy matching %d unmatched rows...", len(unmatched_rows))
         fuzzy_results = self._fuzzy_match(unmatched_rows, auxiliary_tables)
         fuzzy_resolved = [r for r in fuzzy_results if r.match_type == MatchType.FUZZY]
         still_unmatched = [r for r in fuzzy_results if r.match_type == MatchType.UNMATCHED]
+        logger.info("Fuzzy: %d resolved, %d still unmatched", len(fuzzy_resolved), len(still_unmatched))
+
+        logger.info("Semantic matching %d still-unmatched rows...", len(still_unmatched))
         semantic_results = self._semantic_match(still_unmatched, context)
         semantic_resolved = [r for r in semantic_results if r.match_type == MatchType.RULE_BASED]
         final_unmatched = [r for r in semantic_results if r.match_type == MatchType.UNMATCHED]
+        logger.info("Semantic: %d rule-based, %d final unmatched", len(semantic_resolved), len(final_unmatched))
 
         return fuzzy_resolved + semantic_resolved + final_unmatched
-    
+
     def _fuzzy_match(self, unmatched_rows: list[MergedRow], auxiliary_tables: list[TableModel]) -> list[MergedRow]:
         rows = [row.model_dump(mode='json') for row in unmatched_rows]
         aux_rows = []

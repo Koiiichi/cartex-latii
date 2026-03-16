@@ -1,17 +1,22 @@
-from gemini import Gemini
-from models import ContextType, ExtractionResult, GeminiImageContextModel, GeminiTableResult, GeminiContextResult, GeminiTextContextModel, ImageContextModel, TextContextModel, TableModel, GeminiTableModel, T, ModelType 
+from src.gemini import Gemini
+from src.models import ContextType, ExtractionResult, GeminiImageContextModel, GeminiTableResult, GeminiContextResult, GeminiTextContextModel, ImageContextModel, TextContextModel, TableModel, GeminiTableModel, T, ModelType
 from google.genai import types
-from config import config
-from ai.prompts import CONTEXT_EXTRACTION, TABLE_EXTRACTION
+from src.config import config
+from src.ai.prompts import CONTEXT_EXTRACTION, TABLE_EXTRACTION
 from typing import Type
+import logging
 import pymupdf
+
+logger = logging.getLogger(__name__)
 
 class Extractor:
     def __init__(self):
         self.gemini = Gemini()
 
     def extract(self, file_path: str, page_number: int) -> ExtractionResult:
+        logger.info("Converting PDF page %d to image (DPI=%d)", page_number, config.dpi)
         image_bytes = self._pdf_to_image(file_path, page_number)
+        logger.info("PDF page rendered, calling Gemini for table extraction...")
         tables_result = self._extract_tables(image_bytes)
         tables = []
         for i, table in enumerate(tables_result.tables):
@@ -24,7 +29,9 @@ class Extractor:
                 confidence=table.confidence,
                 notes=table.notes
             ))
+        logger.info("Extracted %d tables", len(tables))
 
+        logger.info("Calling Gemini for context extraction...")
         contexts_result = self._extract_context(image_bytes)
         contexts = []
         for i, context in enumerate(contexts_result.context):
@@ -51,21 +58,22 @@ class Extractor:
                     dimensions=(0, 0),
                     interpretation=context.interpretation
                 ))
+        logger.info("Extracted %d context items", len(contexts))
         return ExtractionResult(tables=tables, context=contexts)
-            
+
     def _pdf_to_image(self, file_path: str, page_number: int) -> bytes:
         doc = pymupdf.open(file_path)
         page = doc.load_page(page_number)
         pix = page.get_pixmap(dpi=config.dpi)
         return pix.tobytes()
-    
+
     def _call_gemini(self, image_bytes: bytes, prompt: str, schema: Type[T]) -> T:
         contents = [
-        types.Part.from_bytes(data=image_bytes, mime_type='image/png'),
-        types.Part.from_text(text=prompt)
+            types.Part.from_bytes(data=image_bytes, mime_type='image/png'),
+            types.Part.from_text(text=prompt)
         ]
         return self.gemini.request(contents, schema, model=ModelType.ADVANCED)
-    
+
     def _extract_tables(self, image_bytes: bytes) -> GeminiTableResult:
         return self._call_gemini(image_bytes, TABLE_EXTRACTION, GeminiTableResult)
 

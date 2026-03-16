@@ -15,9 +15,8 @@ def run(file_path: str, page_number: int) -> list[MergedRow]:
     exact_rows = [row for row in rows if row.match_type == MatchType.EXACT]
     unmatched_rows = [row for row in rows if row.match_type == MatchType.UNMATCHED]
     resolved_rows = resolver.resolve(unmatched_rows, result)
-    main_table = next(t for t in result.tables if t.role == TableRole.MAIN)
-    main_column = column_detection_result.matches[0].main_column if column_detection_result.matches else None
-    if not main_column:
-        raise ValueError("No column matches detected.")
-    merged_rows = merger.merge(resolved_rows + exact_rows, main_table, main_column)
+    main_tables = [t for t in result.tables if t.role == TableRole.MAIN]
+    if not main_tables:
+        raise ValueError("No main tables found.")
+    merged_rows = merger.merge(resolved_rows + exact_rows, main_tables)
     return merged_rows
