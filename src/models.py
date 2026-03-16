@@ -63,7 +63,6 @@ class MergedRow(BaseModel):
     match_type: MatchType
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     reasoning: Optional[str] = None
-    table_id: Optional[str] = None
 
 class ExtractionResult(BaseModel):
     tables: list[TableModel] = []
@@ -153,6 +152,15 @@ class GeminiResolutionModel(GeminiResponse):
     )
     reasoning: str = Field(
         description="Explanation of why this match was made or why no match could be found. Be specific — reference the exact strings compared or the rule applied."
+    )
+    row_id: str = Field(
+        description="The row_id of the main schedule item being resolved. This should correspond to the row_id in the MergedRow data model."
+    )
+
+class GeminiResolutionResult(BaseModel):
+    resolutions: list[GeminiResolutionModel] = Field(
+        default=[],
+        description="List of resolution results for each unmatched item. Each entry should indicate the row_id of the item being resolved, the matched value from the auxiliary table (if any), the type of match, and the reasoning behind it."
     )
 
 # Gemini models for mapping auxiliary tables to main schedule items
