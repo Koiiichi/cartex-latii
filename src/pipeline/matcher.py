@@ -41,7 +41,7 @@ class Matcher:
         return all_merged_rows, column_detection_result
 
     def _detect_link_columns(self, tables: list[TableModel]) -> GeminiColumnDetectionResult:
-        tables_json = json.dumps([table.model_dump() for table in tables], indent=2)
+        tables_json = json.dumps([table.model_dump(mode='json') for table in tables], indent=2)
         contents = [
             types.Part.from_text(text=COLUMN_DETECTION),
             types.Part.from_text(text=tables_json)

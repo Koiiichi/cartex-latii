@@ -14,9 +14,7 @@ class Config:
         self.gemini_advanced_model = os.getenv("GEMINI_ADVANCED_MODEL", "gemini-3.1-pro-preview")
         self.base_dir = Path(__file__).parent.parent
         self.debug_dir = self.base_dir / "debug"
-        self.prompts_dir = self.base_dir / "ai" / "prompts"
         self.debug_dir.mkdir(exist_ok=True)
-        self.prompts_dir.mkdir(exist_ok=True)
         self.dpi = 210   
 
 config = Config()

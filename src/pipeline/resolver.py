@@ -22,7 +22,7 @@ class Resolver:
         return fuzzy_resolved + semantic_resolved + final_unmatched
     
     def _fuzzy_match(self, unmatched_rows: list[MergedRow], auxiliary_tables: list[TableModel]) -> list[MergedRow]:
-        rows = [row.model_dump() for row in unmatched_rows]
+        rows = [row.model_dump(mode='json') for row in unmatched_rows]
         aux_rows = []
 
         for table in auxiliary_tables:
@@ -51,8 +51,8 @@ class Resolver:
         return merged_rows
             
     def _semantic_match(self, unmatched_rows: list[MergedRow], context: list[TextContextModel | ImageContextModel]) -> list[MergedRow]:
-        rows = [row.model_dump() for row in unmatched_rows]
-        context_json = json.dumps([c.model_dump() for c in context], indent=2)
+        rows = [row.model_dump(mode='json') for row in unmatched_rows]
+        context_json = json.dumps([c.model_dump(mode='json') for c in context], indent=2)
 
         contents = [
             types.Part.from_text(text=SEMANTIC_MATCHING),
