@@ -1,6 +1,8 @@
-from pydantic import BaseModel, Field 
+from pydantic import BaseModel, Field, model_validator 
 from typing import Optional, TypeVar
 from enum import Enum
+
+from src.templates import TemplateType
 
 # Enum for table roles
 
@@ -26,6 +28,13 @@ class MatchType(Enum):
     RULE_BASED = "rule_based"
     EXACT = "exact"
     UNMATCHED = "unmatched"
+
+class FieldSource(Enum):
+    MAIN_TABLE = "main_table"
+    AUXILIARY_TABLE = "auxiliary_table"
+    TEXT_CONTEXT = "text_context"
+    IMAGE_CONTEXT = "image_context"
+    UNRESOLVED = "unresolved"
 
 # Enum for Gemini model types
 
@@ -82,6 +91,13 @@ class MergedRow(BaseModel):
     reasoning: Optional[str] = None
     applied_rules: list[str] = []
     document_rules: list[str] = []
+
+class EnrichedRow(BaseModel):
+    row_id: str
+    data: dict[str, str]
+    field_sources: dict[str, FieldSource] = {} 
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    reasoning: Optional[str] = None
 
 class ExtractionResult(BaseModel):
     tables: list[TableModel] = []
@@ -215,3 +231,33 @@ class GeminiRuleApplicationResult(GeminiResponse):
         default=[],
         description="List of all rules applied to the main schedule rows. Each entry should indicate which row the rule was applied to, what the rule is, and the reasoning behind its application."
     )
+
+# Gemini Response Model for Contextualization
+
+class GeminiEnrichedRow(GeminiResponse):
+    row_id: str = Field(description="The row_id of the main schedule row being enriched. This should match the row_id from the MergedRow data model.")
+    data: dict[str, str] = Field(description="The enriched data for this row, including any values that were filled in or corrected based on context.")
+    field_sources: dict[str, FieldSource] = Field(
+        default={},
+        description="For each field in the data, indicate the source of the information. Use 'main_table' if the value came directly from the main schedule table, 'auxiliary_table' if it was filled in based on a match to an auxiliary table, 'text_context' if it was derived from a text note, 'image_context' if it was derived from an image interpretation, or 'unresolved' if the value could not be determined."
+    )
+    reasoning: Optional[str] = Field(default=None, description="Any additional notes or reasoning about how this row was enriched, such as which context items were used or any assumptions made.")
+
+class GeminiEnrichedRowResult(GeminiResponse):
+    enriched_rows: list[GeminiEnrichedRow] = Field(
+        default=[],
+        description="List of enriched rows with contextual information applied. Each entry should include the row_id, the enriched data, the source of each field, and any reasoning notes."
+    )
+
+# User Table Schema
+
+class UserTableSchema(BaseModel):
+    template: TemplateType = Field(description="The template type that this user table schema corresponds to. This indicates the intended structure and columns of the table based on predefined templates.")
+    columns: list[str] = Field(description="List of column names in the user-provided table. These should correspond to the headers in the user's spreadsheet or CSV file. The order of columns should match the order in the file.")
+
+    @model_validator(mode='after')
+    def ensure_special_notes_last(self):
+        if "Special Notes" in self.columns:
+            self.columns.remove("Special Notes")
+        self.columns.append("Special Notes")
+        return self
