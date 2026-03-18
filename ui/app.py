@@ -1,5 +1,6 @@
 import sys
 import os
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import gradio as gr
@@ -12,7 +13,7 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 import pymupdf
 
-from main import extractor, matcher, resolver, merger
+from main import extractor, matcher, resolver, merger, rule_applier
 from src.models import MatchType, TableRole
 from src.config import config
 
@@ -100,7 +101,7 @@ def preview_page(pdf_file, page_number):
 
 def process_document(pdf_file, page_number):
     if pdf_file is None:
-        yield None, None, "No file uploaded.", gr.update(visible=False)
+        yield None, None, "", "No file uploaded.", gr.update(visible=False)
         return
 
     lines: list[str] = []
@@ -115,7 +116,7 @@ def process_document(pdf_file, page_number):
 
     try:
         # --- Stage 1: Extraction ---
-        yield None, plain_img, log(f"[1/4] Extracting tables and context from page {int(page_number)}..."), gr.update(visible=False)
+        yield None, plain_img, "", log(f"[1/5] Extracting tables and context from page {int(page_number)}..."), gr.update(visible=False)
         result = extractor.extract(pdf_file.name, page_idx)
 
         main_tables = [t for t in result.tables if t.role == TableRole.MAIN]
@@ -128,15 +129,15 @@ def process_document(pdf_file, page_number):
 
         # Overlay bboxes as soon as extraction is done
         annotated_img = _draw_bboxes(plain_img, result.tables, result.context)
-        yield None, annotated_img, status, gr.update(visible=False)
+        yield None, annotated_img, "", status, gr.update(visible=False)
 
         # --- Stage 2: Matching ---
-        yield None, annotated_img, log("[2/4] Matching rows between main and auxiliary tables..."), gr.update(visible=False)
+        yield None, annotated_img, "", log("[2/5] Matching rows between main and auxiliary tables..."), gr.update(visible=False)
         rows, _ = matcher.match(result)
 
         exact_count     = sum(1 for r in rows if r.match_type == MatchType.EXACT)
         unmatched_count = sum(1 for r in rows if r.match_type == MatchType.UNMATCHED)
-        yield None, annotated_img, log(
+        yield None, annotated_img, "", log(
             f"      Done — {exact_count} exact match(es), {unmatched_count} unmatched"
         ), gr.update(visible=False)
 
@@ -145,27 +146,31 @@ def process_document(pdf_file, page_number):
         unmatched_rows = [r for r in rows if r.match_type == MatchType.UNMATCHED]
 
         if unmatched_rows:
-            yield None, annotated_img, log(f"[3/4] Resolving {len(unmatched_rows)} unmatched row(s) (fuzzy + semantic)..."), gr.update(visible=False)
+            yield None, annotated_img, "", log(f"[3/5] Resolving {len(unmatched_rows)} unmatched row(s) (fuzzy + semantic)..."), gr.update(visible=False)
             resolved_rows = resolver.resolve(unmatched_rows, result)
 
             fuzzy_count = sum(1 for r in resolved_rows if r.match_type == MatchType.FUZZY)
             rule_count  = sum(1 for r in resolved_rows if r.match_type == MatchType.RULE_BASED)
             still_count = sum(1 for r in resolved_rows if r.match_type == MatchType.UNMATCHED)
-            yield None, annotated_img, log(
+            yield None, annotated_img, "", log(
                 f"      Done — {fuzzy_count} fuzzy, {rule_count} rule-based, {still_count} still unmatched"
             ), gr.update(visible=False)
         else:
-            yield None, annotated_img, log("[3/4] No unmatched rows — skipping resolution"), gr.update(visible=False)
+            yield None, annotated_img, "", log("[3/5] No unmatched rows — skipping resolution"), gr.update(visible=False)
             resolved_rows = []
 
         # --- Stage 4: Merging ---
-        yield None, annotated_img, log("[4/4] Merging and ordering final results..."), gr.update(visible=False)
+        yield None, annotated_img, "", log("[4/5] Merging and ordering results..."), gr.update(visible=False)
         main_tables_for_merge = [t for t in result.tables if t.role == TableRole.MAIN]
         if not main_tables_for_merge:
             raise ValueError("No main tables found — cannot merge.")
 
         merged_rows = merger.merge(resolved_rows + exact_rows, main_tables_for_merge)
-        yield None, annotated_img, log(f"      Done — {len(merged_rows)} row(s) in final output"), gr.update(visible=False)
+        yield None, annotated_img, "", log(f"      Done — {len(merged_rows)} row(s) in final output"), gr.update(visible=False)
+
+        yield None, annotated_img, "", log("[5/5] Applying contextual rules..."), gr.update(visible=False)
+
+        merged_rows = rule_applier.apply_rules(merged_rows, result.context)
 
         # --- Build dataframe ---
         rows_data = []
@@ -174,8 +179,16 @@ def process_document(pdf_file, page_number):
             row_dict["_match_type"] = row.match_type.value
             row_dict["_confidence"] = str(row.confidence)
             row_dict["_reasoning"]  = row.reasoning or ""
+            row_dict["_applied_rules"] = " | ".join(row.applied_rules) if row.applied_rules else ""
             rows_data.append(row_dict)
         df = pd.DataFrame(rows_data)
+
+        all_document_rules = []
+        for row in merged_rows:
+            for rule in row.document_rules:
+                if rule not in all_document_rules:
+                    all_document_rules.append(rule)
+        document_rules_text = "\n".join(f"- {r}" for r in all_document_rules) if all_document_rules else "No document-level rules found."
 
         # --- Write debug log ---
         debug_log = {
@@ -187,6 +200,7 @@ def process_document(pdf_file, page_number):
             "fuzzy_matches":      sum(1 for r in merged_rows if r.match_type == MatchType.FUZZY),
             "rule_based_matches": sum(1 for r in merged_rows if r.match_type == MatchType.RULE_BASED),
             "unmatched":          sum(1 for r in merged_rows if r.match_type == MatchType.UNMATCHED),
+            "context":            [c.model_dump(mode='json') for c in result.context],
             "rows":               [row.model_dump(mode='json') for row in merged_rows],
         }
         debug_filename = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -200,19 +214,19 @@ def process_document(pdf_file, page_number):
             f"Unmatched: {debug_log['unmatched']}\n"
             f"Debug log → {debug_filename}"
         )
-        yield df, annotated_img, log(f"\nComplete — {len(merged_rows)} rows\n{summary}"), gr.update(visible=False)
+        yield df, annotated_img, document_rules_text, log(f"\nComplete — {len(merged_rows)} rows\n{summary}"), gr.update(visible=False)
 
     except Exception as e:
         tb = traceback.format_exc()
         logger.error("Pipeline failed:\n%s", tb)
-        yield None, plain_img, log(f"\nPipeline failed: {type(e).__name__}: {e}"), gr.update(value=tb, visible=True)
+        yield None, plain_img, "", log(f"\nPipeline failed: {type(e).__name__}: {e}"), gr.update(value=tb, visible=True)
 
 
 # ── UI ─────────────────────────────────────────────────────────────────────────
 
-with gr.Blocks(title="Cartex — Type 1 Extraction") as app:
+with gr.Blocks(title="Cartex") as app:
     gr.Markdown("# Cartex")
-    gr.Markdown("### Sub-Item / Sub-Table Extraction — Type 1: Contextual Tables")
+    gr.Markdown("### Sub-Item / Sub-Table Contextualization")
 
     with gr.Row():
         # Controls
@@ -243,6 +257,13 @@ with gr.Blocks(title="Cartex — Type 1 Extraction") as app:
         )
 
     with gr.Row():
+        document_rules_output = gr.Textbox(
+            label="Document-level Rules",
+            lines=6,
+            interactive=False,
+        )
+
+    with gr.Row():
         results_table = gr.Dataframe(
             label="Merged Table",
             interactive=False,
@@ -260,7 +281,7 @@ with gr.Blocks(title="Cartex — Type 1 Extraction") as app:
     run_button.click(
         fn=process_document,
         inputs=[pdf_input, page_number],
-        outputs=[results_table, page_image, status_output, error_output],
+        outputs=[results_table, page_image, document_rules_output, status_output, error_output],
     )
 
 if __name__ == "__main__":

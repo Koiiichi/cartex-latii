@@ -3,11 +3,13 @@ from src.pipeline.matcher import Matcher
 from src.pipeline.merger import Merger
 from src.pipeline.resolver import Resolver
 from src.models import MatchType, MergedRow, TableRole
+from src.pipeline.rule_applier import RuleApplier
 
 extractor = Extractor()
 matcher = Matcher()
 resolver = Resolver()
 merger = Merger()
+rule_applier = RuleApplier()
 
 def run(file_path: str, page_number: int) -> list[MergedRow]:
     result = extractor.extract(file_path, page_number)
@@ -19,4 +21,5 @@ def run(file_path: str, page_number: int) -> list[MergedRow]:
     if not main_tables:
         raise ValueError("No main tables found.")
     merged_rows = merger.merge(resolved_rows + exact_rows, main_tables)
-    return merged_rows
+    applied_rows = rule_applier.apply_rules(merged_rows, result.context)
+    return applied_rows

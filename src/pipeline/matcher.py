@@ -95,8 +95,8 @@ class Matcher:
                         data={**row, **aux_data},
                         match_type=MatchType.EXACT,
                         confidence=1.0,
-                        reasoning=f"Exact match on column '{main_column}' with value '{row_value}'"
-                    )
+                        reasoning=f"Exact match on column '{main_column}' with value '{row_value}'",
+                        )
                     merged_rows.append(merged_row)
                     break
             else:
@@ -136,6 +136,12 @@ class Matcher:
         resolutions = self.gemini.request(contents, GeminiCompoundResolutionResult, model=ModelType.ADVANCED)
         merged_rows = []
 
+        resolved_ids = {r.row_id for r in resolutions.resolutions}
+        input_ids = {item["row_id"] for item in compound_pending}
+        missing_ids = input_ids - resolved_ids
+        if missing_ids:
+            logger.warning("Compound resolution dropped %d row(s): %s", len(missing_ids), missing_ids)
+
         for resolution in resolutions.resolutions:
             item = next((i for i in compound_pending if i["row_id"] == resolution.row_id), None)
             original_row = item["row"] if item else {}
@@ -172,4 +178,17 @@ class Matcher:
                 confidence=resolution.confidence,
                 reasoning=f"Compound reference '{compound_value}' resolved — primary: '{resolution.primary}', secondary: {resolution.secondary}. {resolution.reasoning}"
             ))
+
+        # Recover any rows that Gemini failed to return resolutions for
+        for row_id in missing_ids:
+            item = next(i for i in compound_pending if i["row_id"] == row_id)
+            logger.warning("Falling back to UNMATCHED for dropped compound row '%s'", row_id)
+            merged_rows.append(MergedRow(
+                row_id=row_id,
+                data=item["row"],
+                match_type=MatchType.UNMATCHED,
+                confidence=0.0,
+                reasoning=f"Compound reference '{item['compound_value']}' was not resolved by AI — row dropped from batch response"
+            ))
+
         return merged_rows

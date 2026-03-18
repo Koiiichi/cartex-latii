@@ -13,6 +13,14 @@ class ContextType(Enum):
     TEXT = "text"
     IMAGE = "image"
 
+class ContextCategory(Enum):
+    GENERAL_NOTE = "general_note"
+    PERFORMANCE_SPEC = "performance_spec"
+    MATERIAL_REQUIREMENT = "material_requirement"
+    STRUCTURAL_CRITERIA = "structural_criteria"
+    CODE_REQUIREMENT = "code_requirement"
+    OTHER = "other"
+
 class MatchType(Enum):
     FUZZY = "fuzzy"
     RULE_BASED = "rule_based"
@@ -45,7 +53,7 @@ class TableModel(BaseModel):
     rows: list[dict[str, str]]
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     notes: Optional[str] = None
-    bbox: Optional[BoundingBox] = None  # x, y, width, height in pixels
+    bbox: Optional[BoundingBox] = None
 
 class ContextModel(BaseModel):
     context_id: str
@@ -54,10 +62,11 @@ class ContextModel(BaseModel):
     content: str
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     notes: Optional[str] = None
-    bbox: Optional[BoundingBox] = None  # x, y, width, height in pixels
+    bbox: Optional[BoundingBox] = None 
 
 class TextContextModel(ContextModel):
-    category: Optional[str] = None
+    category: Optional[ContextCategory] = Field(default=ContextCategory.OTHER, description="Category of this text context. Examples: 'general_note', 'performance_spec', 'material_requirement', 'structural_criteria', 'code_requirement'. Use your best judgment based on the content.")
+    category_detail: Optional[str] = Field(default=None, description="Any additional details about the category that may be relevant, such as specific codes referenced, materials mentioned, or criteria described.")
     scope: Optional[list[str]] = None
 
 class ImageContextModel(ContextModel):
@@ -71,6 +80,8 @@ class MergedRow(BaseModel):
     match_type: MatchType
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     reasoning: Optional[str] = None
+    applied_rules: list[str] = []
+    document_rules: list[str] = []
 
 class ExtractionResult(BaseModel):
     tables: list[TableModel] = []
@@ -122,10 +133,11 @@ class GeminiContextModel(GeminiResponse):
     )
 
 class GeminiTextContextModel(GeminiContextModel):
-    category: Optional[str] = Field(
-        default=None,
+    category: ContextCategory = Field(
+        default=ContextCategory.OTHER,
         description="Category of this text context. Examples: 'general_note', 'performance_spec', 'material_requirement', 'structural_criteria', 'code_requirement'. Use your best judgment based on the content."
     )
+    category_detail: Optional[str] = Field(default=None, description="Any additional details about the category that may be relevant, such as specific codes referenced, materials mentioned, or criteria described.")
 
 class GeminiImageContextModel(GeminiContextModel):
     interpretation: Optional[str] = Field(
@@ -183,10 +195,23 @@ class GeminiCompoundResolution(GeminiResponse):
     components: list[str] = Field(description="List of the individual components or attributes that were identified as part of this compound item. For example, if a row in the main schedule includes a note that references multiple items in an auxiliary table, list each of those items here.")
     primary: str = Field(description="The primary component or attribute that best represents the main item. This is the value that should be used for matching against the auxiliary table.")
     secondary: list[str] = Field(description="Any secondary components or attributes that provide additional context or information about the main item, but are not the primary basis for matching.")
-    reasoning: str = Field(description="Detailed explanation of why the primary component was chosen for matching. Reference specific text from the main schedule and auxiliary tables that informed this decision.")
+    reasoning: str = Field(max_length=500, description="Brief explanation (max 500 chars) of why the primary component was chosen. Reference the specific prefix or auxiliary table entry that informed this decision.")
 
 class GeminiCompoundResolutionResult(BaseModel):
     resolutions: list[GeminiCompoundResolution] = Field(
         default=[],
         description="One resolution per compound row. Each entry must include the row_id from the input so results can be matched back to their source rows."
+    )
+
+# Gemini Context Rule Resolving Model
+
+class GeminiRuleApplication(GeminiResponse):
+    row_id: str = Field(description="The row_id of the main schedule row being evaluated for rule application.")
+    rule: str = Field(max_length=500, description="The specific rule being applied to this row. This should be a clear, concise statement of the condition being checked or the transformation being applied.")
+    reasoning: str = Field(max_length=500, description="Brief explanation (max 500 chars) of why this rule applies to the given row, referencing specific data from the row and any relevant context.")
+
+class GeminiRuleApplicationResult(GeminiResponse):
+    applications: list[GeminiRuleApplication] = Field(
+        default=[],
+        description="List of all rules applied to the main schedule rows. Each entry should indicate which row the rule was applied to, what the rule is, and the reasoning behind its application."
     )
